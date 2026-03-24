@@ -1,10 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
-import { Send, User, Bot, Trash2 } from 'lucide-react'
+import { Send, User, Bot, Trash2, Mic, MicOff } from 'lucide-react'
 import { memoryManager } from '../utils/memoryManager'
-
-// Test if memoryManager is working
-console.log('🧪 Memory Manager loaded:', memoryManager)
-memoryManager.debug()
 
 type AppMode = 'personal' | 'study' | 'coding'
 
@@ -24,21 +20,195 @@ export default function ChatInterface({ currentMode }: ChatInterfaceProps) {
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [userName, setUserName] = useState('')
+  const [isListening, setIsListening] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
 
-  // Load memory on component mount
+  // Check if browser supports speech recognition
+  const isSpeechSupported = () => {
+    return 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window
+  }
+
+  const sendMessageWithText = async (text: string) => {
+    if (!text.trim() || isLoading) return
+
+    console.log('📤 Sending:', text)
+
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      content: text,
+      role: 'user',
+      timestamp: new Date(),
+    }
+
+    setMessages(prev => [...prev, userMessage])
+    setInput('')
+    setIsLoading(true)
+    
+    memoryManager.addMessage({
+      role: 'user',
+      content: text,
+      mode: currentMode
+    })
+
+    try {
+      const recentHistory = memoryManager.getRecentHistory(10)
+      
+      const response = await fetch('http://localhost:8000/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: text,
+          mode: currentMode,
+          history: recentHistory,
+          userName: userName,
+          memorySummary: memoryManager.getSummary()
+        }),
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          content: data.data.response,
+          role: 'assistant',
+          timestamp: new Date(),
+        }
+        setMessages(prev => [...prev, assistantMessage])
+        
+        memoryManager.addMessage({
+          role: 'assistant',
+          content: data.data.response,
+          mode: currentMode
+        })
+        
+        // Name detection
+        if (!userName) {
+          const namePatterns = [
+            /my name is (\w+)/i,
+            /i am (\w+)/i,
+            /i'm (\w+)/i,
+            /call me (\w+)/i,
+            /name is (\w+)/i
+          ]
+          
+          for (const pattern of namePatterns) {
+            const match = text.match(pattern)
+            if (match) {
+              const newName = match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase()
+              setUserName(newName)
+              memoryManager.setName(newName)
+              break
+            }
+          }
+        }
+      } else {
+        throw new Error(data.message || 'Failed to get response')
+      }
+    } catch (error) {
+      console.error('Error:', error)
+      const errorResponse: Message = {
+        id: (Date.now() + 1).toString(),
+        content: 'Sorry, I encountered an error. Please make sure the backend is running.',
+        role: 'assistant',
+        timestamp: new Date(),
+      }
+      setMessages(prev => [...prev, errorResponse])
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const sendMessage = async () => {
+    await sendMessageWithText(input)
+  }
+
+  // Alternative voice method: Use the input field's built-in speech
+  const startVoiceInput = () => {
+    // Check if browser supports speech input on input field
+    if (inputRef.current && 'webkitSpeech' in inputRef.current) {
+      // @ts-ignore - webkitSpeech property
+      inputRef.current.webkitSpeech.start()
+      setIsListening(true)
+    } else if (isSpeechSupported()) {
+      // Fallback to manual SpeechRecognition
+      const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition
+      if (SpeechRecognitionAPI) {
+        try {
+          const recognition = new SpeechRecognitionAPI()
+          recognition.lang = 'en-US'
+          recognition.interimResults = false
+          
+          recognition.onstart = () => {
+            console.log('🎤 Listening...')
+            setIsListening(true)
+          }
+          
+          recognition.onresult = (event: any) => {
+            const transcript = event.results[0][0].transcript
+            console.log('📝 Heard:', transcript)
+            setInput(transcript)
+            setIsListening(false)
+            
+            // Auto-send after voice
+            setTimeout(() => {
+              if (transcript.trim()) {
+                sendMessageWithText(transcript)
+              }
+            }, 100)
+          }
+          
+          recognition.onerror = (event: any) => {
+            console.error('Speech error:', event.error)
+            setIsListening(false)
+            if (event.error === 'not-allowed') {
+              alert('Please allow microphone access to use voice input.')
+            } else if (event.error === 'network') {
+              alert('Voice input is not available on HTTP. Please use:\n\n1. Your phone (works via HTTPS on Vercel)\n2. Or type manually\n\nFor best voice experience, open on your phone: https://sidai-assistant.vercel.app')
+            }
+          }
+          
+          recognition.onend = () => {
+            setIsListening(false)
+          }
+          
+          recognition.start()
+        } catch (err) {
+          console.error('Failed to start:', err)
+          alert('Voice input failed. Please type your message.')
+          setIsListening(false)
+        }
+      } else {
+        alert('Your browser does not support voice input. Please type your message.')
+      }
+    } else {
+      alert('Voice input is not supported in this browser.\n\nFor best experience:\n1. Open on your phone: https://sidai-assistant.vercel.app\n2. Or use your phone\'s keyboard microphone')
+    }
+  }
+
+  // Simple toggle function
+  const toggleListening = () => {
+    if (isListening) {
+      setIsListening(false)
+      // Try to stop any active recognition
+      if (window.SpeechRecognition || window.webkitSpeechRecognition) {
+        // Can't easily stop without reference, but user can just click again
+      }
+    } else {
+      startVoiceInput()
+    }
+  }
+
+  // Load memory on mount
   useEffect(() => {
     const savedName = memoryManager.getName()
     const history = memoryManager.getRecentHistory(20)
-    
-    console.log('📀 Loading memory - Saved name:', savedName)
-    memoryManager.debug()
     
     if (savedName) {
       setUserName(savedName)
     }
     
-    // Load previous messages
     const loadedMessages: Message[] = history.map((msg, index) => ({
       id: index.toString(),
       content: msg.content,
@@ -69,122 +239,6 @@ export default function ChatInterface({ currentMode }: ChatInterfaceProps) {
     scrollToBottom()
   }, [messages])
 
-  const sendMessage = async () => {
-    if (!input.trim() || isLoading) return
-
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      content: input,
-      role: 'user',
-      timestamp: new Date(),
-    }
-
-    setMessages(prev => [...prev, userMessage])
-    setInput('')
-    setIsLoading(true)
-    
-    // Save to memory
-    memoryManager.addMessage({
-      role: 'user',
-      content: input,
-      mode: currentMode
-    })
-
-    try {
-      // Get recent history for context
-      const recentHistory = memoryManager.getRecentHistory(10)
-      
-      console.log('📤 Sending to backend:', {
-        message: input,
-        mode: currentMode,
-        userName: userName,
-        historyLength: recentHistory.length,
-        memorySummary: memoryManager.getSummary()
-      })
-      
-      const response = await fetch('http://localhost:8000/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          message: input,
-          mode: currentMode,
-          history: recentHistory,
-          userName: userName,
-          memorySummary: memoryManager.getSummary()
-        }),
-      })
-
-      const data = await response.json()
-
-      if (data.success) {
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          content: data.data.response,
-          role: 'assistant',
-          timestamp: new Date(),
-        }
-        setMessages(prev => [...prev, assistantMessage])
-        
-        // Save to memory
-        memoryManager.addMessage({
-          role: 'assistant',
-          content: data.data.response,
-          mode: currentMode
-        })
-        
-        // Check if user introduced themselves
-        if (!userName) {
-          // Name detection patterns
-          const namePatterns = [
-            /my name is (\w+)/i,
-            /i am (\w+)/i,
-            /i'm (\w+)/i,
-            /call me (\w+)/i,
-            /name is (\w+)/i,
-            /this is (\w+)/i
-          ]
-          
-          let detectedName = null
-          for (const pattern of namePatterns) {
-            const match = input.match(pattern)
-            if (match) {
-              detectedName = match[1]
-              break
-            }
-          }
-          
-          // Also check if the message is just a name (like "Pranav")
-          if (!detectedName && input.trim().length < 20 && !input.includes(' ')) {
-            detectedName = input.trim()
-          }
-          
-          if (detectedName) {
-            const newName = detectedName.charAt(0).toUpperCase() + detectedName.slice(1).toLowerCase()
-            console.log('🎯 Setting name to:', newName)
-            setUserName(newName)
-            memoryManager.setName(newName)
-            memoryManager.debug()
-          }
-        }
-      } else {
-        throw new Error(data.message || 'Failed to get response')
-      }
-    } catch (error) {
-      console.error('❌ Error sending message:', error)
-      const errorResponse: Message = {
-        id: (Date.now() + 1).toString(),
-        content: 'Sorry, I encountered an error. Please make sure the backend is running.',
-        role: 'assistant',
-        timestamp: new Date(),
-      }
-      setMessages(prev => [...prev, errorResponse])
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
   const clearHistory = () => {
     if (confirm('Clear all conversation history?')) {
       memoryManager.clearHistory()
@@ -206,7 +260,6 @@ export default function ChatInterface({ currentMode }: ChatInterfaceProps) {
 
   return (
     <div className="bg-gray-800 rounded-lg h-[600px] flex flex-col">
-      {/* Header with memory controls */}
       <div className="border-b border-gray-700 p-3 flex justify-between items-center">
         <div className="text-sm text-gray-400">
           {userName ? `👋 Hello, ${userName}` : '💭 New conversation'}
@@ -220,7 +273,6 @@ export default function ChatInterface({ currentMode }: ChatInterfaceProps) {
         </button>
       </div>
 
-      {/* Messages */}
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
         {messages.map((message) => (
           <div
@@ -277,18 +329,29 @@ export default function ChatInterface({ currentMode }: ChatInterfaceProps) {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
       <div className="border-t border-gray-700 p-4">
         <div className="flex gap-2">
           <input
+            ref={inputRef}
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyPress={handleKeyPress}
-            placeholder={!userName ? "What's your name? (e.g., 'My name is Pranav')" : `Ask me anything in ${currentMode} mode...`}
+            placeholder={!userName ? "What's your name? (or tap the mic 🎤)" : "Tap mic to speak or type..."}
             className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white placeholder-gray-400 focus:outline-none focus:border-blue-400"
             disabled={isLoading}
           />
+          <button
+            onClick={toggleListening}
+            className={`p-2 rounded-lg transition-colors ${
+              isListening 
+                ? 'bg-red-500 hover:bg-red-600 animate-pulse' 
+                : 'bg-purple-500 hover:bg-purple-600'
+            }`}
+            title={isListening ? "Listening..." : "Tap to speak"}
+          >
+            {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+          </button>
           <button
             onClick={sendMessage}
             disabled={isLoading || !input.trim()}
