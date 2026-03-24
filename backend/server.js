@@ -22,10 +22,10 @@ const SYSTEM_PROMPTS = {
   Provide clean code with explanations. Be practical and helpful.`
 };
 
-// Groq API endpoint
+// Groq API endpoint with memory support
 app.post('/api/chat', async (req, res) => {
   try {
-    const { message, mode } = req.body;
+    const { message, mode, history, userName, memorySummary } = req.body;
 
     if (!message) {
       return res.status(400).json({
@@ -34,7 +34,25 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
-    console.log(`📨 [${mode}] ${message}`);
+    console.log(`📨 [${mode}] ${userName ? `User: ${userName}` : 'New user'} said: ${message}`);
+
+    // Build system prompt with memory context
+    let systemPrompt = SYSTEM_PROMPTS[mode] || SYSTEM_PROMPTS.personal;
+    
+    if (userName) {
+      systemPrompt += `\n\nThe user's name is ${userName}. Address them by name occasionally.`;
+    }
+    
+    if (memorySummary) {
+      systemPrompt += `\n\nContext from previous conversations: ${memorySummary}`;
+    }
+
+    // Build messages with history
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      ...(history || []).slice(-10), // Last 10 messages for context
+      { role: 'user', content: message }
+    ];
 
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -44,16 +62,7 @@ app.post('/api/chat', async (req, res) => {
       },
       body: JSON.stringify({
         model: 'llama-3.3-70b-versatile',
-        messages: [
-          { 
-            role: 'system', 
-            content: SYSTEM_PROMPTS[mode] || SYSTEM_PROMPTS.personal 
-          },
-          { 
-            role: 'user', 
-            content: message 
-          }
-        ],
+        messages: messages,
         max_tokens: 500,
         temperature: 0.7,
       }),
