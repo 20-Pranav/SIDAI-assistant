@@ -15,6 +15,9 @@ interface ChatInterfaceProps {
   currentMode: AppMode
 }
 
+// Your computer's local IP address (from ipconfig)
+const API_URL = 'http://10.164.111.74:8000/api/chat'
+
 export default function ChatInterface({ currentMode }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -54,7 +57,7 @@ export default function ChatInterface({ currentMode }: ChatInterfaceProps) {
     try {
       const recentHistory = memoryManager.getRecentHistory(10)
       
-      const response = await fetch('http://localhost:8000/api/chat', {
+      const response = await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

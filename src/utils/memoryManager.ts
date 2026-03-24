@@ -62,7 +62,6 @@ class MemoryManager {
       timestamp: Date.now()
     })
     
-    // Keep only last 100 messages
     if (this.memory.conversationHistory.length > 100) {
       this.memory.conversationHistory = this.memory.conversationHistory.slice(-100)
     }

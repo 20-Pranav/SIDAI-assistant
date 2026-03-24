@@ -112,8 +112,11 @@ app.get('/', (req, res) => {
   });
 });
 
-app.listen(port, () => {
-  console.log(`🚀 SID AI Backend running on http://localhost:${port}`);
+// Listen on all network interfaces (0.0.0.0) to allow phone connections
+app.listen(port, '0.0.0.0', () => {
+  console.log(`🚀 SID AI Backend running on http://0.0.0.0:${port}`);
+  console.log(`📱 Access from phone: http://10.164.111.74:${port}`);
+  console.log(`💻 Access from local: http://localhost:${port}`);
   console.log(`🤖 Using Groq (Llama 3) - Free & Fast!`);
   console.log(`📝 API ready at http://localhost:${port}/api/chat`);
   console.log(`❤️  Health check at http://localhost:${port}/health`);
