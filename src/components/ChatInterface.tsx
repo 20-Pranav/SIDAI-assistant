@@ -22,11 +22,11 @@ export default function ChatInterface({ currentMode }: ChatInterfaceProps) {
   const [userName, setUserName] = useState('')
   const [isListening, setIsListening] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const recognitionRef = useRef<any>(null)
 
   // Check if browser supports speech recognition
-  const isSpeechSupported = () => {
-    return 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window
+  const isSpeechSupported = (): boolean => {
+    return !!(typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition))
   }
 
   const sendMessageWithText = async (text: string) => {
@@ -124,77 +124,82 @@ export default function ChatInterface({ currentMode }: ChatInterfaceProps) {
     await sendMessageWithText(input)
   }
 
-  // Alternative voice method: Use the input field's built-in speech
   const startVoiceInput = () => {
-    // Check if browser supports speech input on input field
-    if (inputRef.current && 'webkitSpeech' in inputRef.current) {
-      // @ts-ignore - webkitSpeech property
-      inputRef.current.webkitSpeech.start()
-      setIsListening(true)
-    } else if (isSpeechSupported()) {
-      // Fallback to manual SpeechRecognition
-      const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition
-      if (SpeechRecognitionAPI) {
-        try {
-          const recognition = new SpeechRecognitionAPI()
-          recognition.lang = 'en-US'
-          recognition.interimResults = false
-          
-          recognition.onstart = () => {
-            console.log('🎤 Listening...')
-            setIsListening(true)
-          }
-          
-          recognition.onresult = (event: any) => {
-            const transcript = event.results[0][0].transcript
-            console.log('📝 Heard:', transcript)
-            setInput(transcript)
-            setIsListening(false)
-            
-            // Auto-send after voice
-            setTimeout(() => {
-              if (transcript.trim()) {
-                sendMessageWithText(transcript)
-              }
-            }, 100)
-          }
-          
-          recognition.onerror = (event: any) => {
-            console.error('Speech error:', event.error)
-            setIsListening(false)
-            if (event.error === 'not-allowed') {
-              alert('Please allow microphone access to use voice input.')
-            } else if (event.error === 'network') {
-              alert('Voice input is not available on HTTP. Please use:\n\n1. Your phone (works via HTTPS on Vercel)\n2. Or type manually\n\nFor best voice experience, open on your phone: https://sidai-assistant.vercel.app')
-            }
-          }
-          
-          recognition.onend = () => {
-            setIsListening(false)
-          }
-          
-          recognition.start()
-        } catch (err) {
-          console.error('Failed to start:', err)
-          alert('Voice input failed. Please type your message.')
-          setIsListening(false)
-        }
-      } else {
-        alert('Your browser does not support voice input. Please type your message.')
-      }
-    } else {
+    if (!isSpeechSupported()) {
       alert('Voice input is not supported in this browser.\n\nFor best experience:\n1. Open on your phone: https://sidai-assistant.vercel.app\n2. Or use your phone\'s keyboard microphone')
+      return
+    }
+
+    const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition
+    
+    try {
+      const recognition = new SpeechRecognitionAPI()
+      recognition.lang = 'en-US'
+      recognition.interimResults = false
+      recognition.maxAlternatives = 1
+      recognition.continuous = false
+      
+      recognition.onstart = () => {
+        console.log('🎤 Listening...')
+        setIsListening(true)
+      }
+      
+      recognition.onresult = (event: any) => {
+        const transcript = event.results[0][0].transcript
+        console.log('📝 Heard:', transcript)
+        setInput(transcript)
+        setIsListening(false)
+        
+        // Auto-send after voice
+        setTimeout(() => {
+          if (transcript.trim()) {
+            sendMessageWithText(transcript)
+          }
+        }, 100)
+      }
+      
+      recognition.onerror = (event: any) => {
+        console.error('Speech error:', event.error)
+        setIsListening(false)
+        
+        if (event.error === 'not-allowed') {
+          alert('Please allow microphone access to use voice input.')
+        } else if (event.error === 'network') {
+          alert('Voice input works best on:\n\n📱 Your phone: https://sidai-assistant.vercel.app\n\nOn desktop, please type your message.')
+        } else if (event.error === 'no-speech') {
+          alert('No speech detected. Please try again.')
+        } else {
+          alert(`Voice error: ${event.error}. Please type your message.`)
+        }
+      }
+      
+      recognition.onend = () => {
+        console.log('🎤 Listening ended')
+        setIsListening(false)
+        recognitionRef.current = null
+      }
+      
+      recognitionRef.current = recognition
+      recognition.start()
+      
+    } catch (err) {
+      console.error('Failed to start:', err)
+      alert('Voice input failed. Please type your message.')
+      setIsListening(false)
     }
   }
 
-  // Simple toggle function
   const toggleListening = () => {
     if (isListening) {
-      setIsListening(false)
-      // Try to stop any active recognition
-      if (window.SpeechRecognition || window.webkitSpeechRecognition) {
-        // Can't easily stop without reference, but user can just click again
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop()
+        } catch (e) {
+          console.log('Could not stop recognition')
+        }
+        recognitionRef.current = null
       }
+      setIsListening(false)
     } else {
       startVoiceInput()
     }
@@ -332,7 +337,6 @@ export default function ChatInterface({ currentMode }: ChatInterfaceProps) {
       <div className="border-t border-gray-700 p-4">
         <div className="flex gap-2">
           <input
-            ref={inputRef}
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
